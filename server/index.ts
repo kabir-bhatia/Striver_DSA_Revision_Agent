@@ -6,22 +6,31 @@ import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
 import {
   clearChatMessages,
+  completeRevision,
+  createGoal,
+  deleteGoal,
   getCachedResources,
   getCachedStudyBundle,
   getChatMessages,
+  getGoals,
   getProgressSummary,
   getSections,
   getTopic,
+  getTodaySchedule,
+  getTopicRevisions,
   getTopics,
   saveChatMessage,
   saveResources,
   saveStudyBundle,
-  setProgress
+  setTopicDone,
+  setTopicNote,
+  setTopicTier,
+  updateGoal
 } from "./db.js";
 import { answerTopicQuestion, generateStudyBundle } from "./services/gemini.js";
 import { fetchTopicResources } from "./services/resources.js";
 import { syncSheet } from "./services/sheet.js";
-import type { ChatMessage, ProgressState } from "./types.js";
+import type { ChatMessage, TierFilter } from "./types.js";
 
 const app = express();
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -76,7 +85,8 @@ app.get("/api/topics", async (req, res, next) => {
       getTopics({
         sectionId: stringQuery(req.query.sectionId),
         subcategoryId: stringQuery(req.query.subcategoryId),
-        query: stringQuery(req.query.q)
+        query: stringQuery(req.query.q),
+        tier: tierQuery(req.query.tier)
       })
     );
   } catch (error) {
@@ -94,6 +104,12 @@ app.get("/api/topics/:id/chat", (req, res) => {
   const topic = getTopic(req.params.id);
   if (!topic) return res.status(404).json({ error: "Topic not found" });
   return res.json(getChatMessages(topic.id));
+});
+
+app.get("/api/topics/:id/revisions", (req, res) => {
+  const topic = getTopic(req.params.id);
+  if (!topic) return res.status(404).json({ error: "Topic not found" });
+  return res.json(getTopicRevisions(topic.id));
 });
 
 app.delete("/api/topics/:id/chat", (req, res) => {
@@ -127,17 +143,84 @@ app.post("/api/topics/:id/study", async (req, res, next) => {
   }
 });
 
-app.patch("/api/topics/:id/progress", (req, res) => {
-  const progress = req.body?.progress;
-  if (!isProgressState(progress)) {
-    return res.status(400).json({ error: "Invalid progress value" });
+app.patch("/api/topics/:id/done", (req, res, next) => {
+  try {
+    const done = req.body?.done;
+    if (typeof done !== "boolean") {
+      return res.status(400).json({ error: "Done must be a boolean" });
+    }
+    const topic = getTopic(req.params.id);
+    if (!topic) return res.status(404).json({ error: "Topic not found" });
+    return res.json(setTopicDone(topic.id, done));
+  } catch (error) {
+    next(error);
   }
+});
 
+app.patch("/api/topics/:id/tier", (req, res, next) => {
+  try {
+    const tier = req.body?.tier ?? null;
+    if (tier !== null && !isTier(tier)) {
+      return res.status(400).json({ error: "Invalid tier value" });
+    }
+    const topic = getTopic(req.params.id);
+    if (!topic) return res.status(404).json({ error: "Topic not found" });
+    return res.json(setTopicTier(topic.id, tier));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch("/api/topics/:id/note", (req, res) => {
   const topic = getTopic(req.params.id);
   if (!topic) return res.status(404).json({ error: "Topic not found" });
+  return res.json(setTopicNote(topic.id, String(req.body?.note || "")));
+});
 
-  setProgress(topic.id, progress);
-  return res.json({ ...topic, progress });
+app.get("/api/schedule/today", (_req, res) => {
+  return res.json(getTodaySchedule());
+});
+
+app.post("/api/revisions/:id/complete", (req, res) => {
+  completeRevision(Number(req.params.id));
+  return res.json(getTodaySchedule());
+});
+
+app.get("/api/goals", (req, res) => {
+  res.json(getGoals(stringQuery(req.query.date)));
+});
+
+app.post("/api/goals", (req, res, next) => {
+  try {
+    res.json(
+      createGoal({
+        dateUtc: stringQuery(req.body?.dateUtc),
+        topicId: stringQuery(req.body?.topicId),
+        title: stringQuery(req.body?.title)
+      })
+    );
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch("/api/goals/:id", (req, res, next) => {
+  try {
+    res.json(
+      updateGoal(Number(req.params.id), {
+        title: req.body?.title === undefined ? undefined : String(req.body.title),
+        completed:
+          req.body?.completed === undefined ? undefined : Boolean(req.body.completed)
+      })
+    );
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/goals/:id", (req, res) => {
+  deleteGoal(Number(req.params.id));
+  res.json({ ok: true });
 });
 
 app.post("/api/chat", async (req, res, next) => {
@@ -198,6 +281,19 @@ function stringQuery(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function isProgressState(value: unknown): value is ProgressState {
-  return value === "todo" || value === "learning" || value === "revised";
+function tierQuery(value: unknown): TierFilter | undefined {
+  if (
+    value === "easy" ||
+    value === "medium" ||
+    value === "hard" ||
+    value === "tricky" ||
+    value === "unassigned"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function isTier(value: unknown) {
+  return value === "easy" || value === "medium" || value === "hard" || value === "tricky";
 }

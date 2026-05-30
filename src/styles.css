@@ -18,12 +18,18 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
 button {
   cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .app-shell {
@@ -83,6 +89,7 @@ button {
 
 .icon-button,
 .primary-button,
+.secondary-button,
 .chat-input button {
   border: 0;
   border-radius: 8px;
@@ -151,8 +158,29 @@ button {
 }
 
 .progress-card small {
-  color: #aecaC0;
+  color: #aecac0;
   margin-top: 4px;
+}
+
+.view-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 18px;
+}
+
+.view-switch button {
+  border: 1px solid #375c50;
+  border-radius: 8px;
+  background: #18362e;
+  color: #dcebe5;
+  height: 38px;
+  font-weight: 800;
+}
+
+.view-switch button.active {
+  background: #e8f4ef;
+  color: #0f2c24;
 }
 
 .search-box {
@@ -234,14 +262,20 @@ button {
   font-weight: 700;
 }
 
-.subcat-row {
+.subcat-row,
+.tier-filter-row {
   display: flex;
   gap: 8px;
   overflow-x: auto;
-  padding: 18px 0;
+  padding: 14px 0;
 }
 
-.subcat-row button {
+.tier-filter-row {
+  padding-top: 0;
+}
+
+.subcat-row button,
+.tier-filter-row button {
   border: 1px solid #d4dee6;
   border-radius: 8px;
   background: #fff;
@@ -250,7 +284,8 @@ button {
   white-space: nowrap;
 }
 
-.subcat-row button.active {
+.subcat-row button.active,
+.tier-filter-row button.active {
   background: #1f6f5d;
   border-color: #1f6f5d;
   color: #fff;
@@ -258,7 +293,7 @@ button {
 
 .topic-row {
   display: grid;
-  grid-template-columns: 12px 1fr auto;
+  grid-template-columns: 24px 1fr auto;
   align-items: center;
   gap: 10px;
   padding: 12px;
@@ -292,19 +327,28 @@ button {
   font-style: normal;
 }
 
-.status-dot {
-  width: 9px;
-  height: 9px;
+.row-check,
+.mini-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid #b7c4cf;
   border-radius: 999px;
-  background: #a9b5bf;
+  background: #fff;
+  color: #fff;
 }
 
-.status-dot.learning {
-  background: #d59e20;
-}
-
-.status-dot.revised {
+.row-check.checked,
+.mini-check:has(svg) {
   background: #1f8d5d;
+  border-color: #1f8d5d;
+}
+
+.mini-check {
+  color: #fff;
+  flex: 0 0 auto;
 }
 
 .detail-pane {
@@ -356,6 +400,27 @@ button {
   color: #fff;
 }
 
+.secondary-button,
+.check-button {
+  min-height: 38px;
+  border: 1px solid #cbd6df;
+  border-radius: 8px;
+  background: #fff;
+  color: #1f2c38;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.check-button.checked {
+  border-color: #1f8d5d;
+  background: #e4f4ec;
+  color: #17633f;
+  font-weight: 800;
+}
+
 .study-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -400,6 +465,44 @@ button {
   background: #0c1714;
   color: #e8fff5;
   line-height: 1.5;
+}
+
+.note-panel {
+  margin-bottom: 12px;
+}
+
+.note-panel textarea {
+  width: 100%;
+  min-height: 86px;
+  resize: vertical;
+  border: 1px solid #cbd6df;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+.revision-preview {
+  margin-bottom: 12px;
+}
+
+.revision-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.revision-chips span {
+  border-radius: 999px;
+  background: #eef3f7;
+  color: #41515f;
+  padding: 6px 10px;
+  font-weight: 800;
+  font-size: 0.84rem;
+}
+
+.revision-chips span.complete {
+  background: #e4f4ec;
+  color: #17633f;
 }
 
 .availability-row {
@@ -487,6 +590,67 @@ button {
   background: #16352c;
   color: #fff;
   padding: 0 16px;
+}
+
+.today-list,
+.goal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.today-card,
+.goal-row {
+  border: 1px solid #dce4eb;
+  border-radius: 8px;
+  background: #fff;
+  padding: 14px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.today-card strong,
+.goal-row strong {
+  display: block;
+}
+
+.today-card p,
+.today-card small,
+.goal-row small {
+  display: block;
+  margin: 4px 0 0;
+  color: #687783;
+  line-height: 1.45;
+}
+
+.today-goals .detail-header {
+  margin-bottom: 16px;
+}
+
+.goal-input-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.goal-input-row input {
+  height: 40px;
+  border: 1px solid #cbd6df;
+  border-radius: 8px;
+  padding: 0 12px;
+}
+
+.goal-row {
+  grid-template-columns: auto 1fr auto;
+}
+
+.goal-row.done strong {
+  color: #667381;
+  text-decoration: line-through;
 }
 
 .inline-loading {

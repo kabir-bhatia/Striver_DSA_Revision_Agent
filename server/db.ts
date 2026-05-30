@@ -4,11 +4,14 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import type {
   ChatMessage,
+  DailyGoal,
   ProgressSummary,
-  ProgressState,
+  RevisionItem,
   SheetProblem,
   SheetSection,
   StudyBundle,
+  TierFilter,
+  TopicTier,
   TopicResources
 } from "./types.js";
 
@@ -50,7 +53,11 @@ db.exec(`
     link TEXT,
     difficulty TEXT,
     position INTEGER NOT NULL,
-    progress TEXT NOT NULL DEFAULT 'todo'
+    progress TEXT NOT NULL DEFAULT 'todo',
+    done INTEGER NOT NULL DEFAULT 0,
+    tier TEXT CHECK (tier IN ('easy', 'medium', 'hard', 'tricky')),
+    mistake_note TEXT NOT NULL DEFAULT '',
+    done_at_utc TEXT
   );
 
   CREATE TABLE IF NOT EXISTS resources (
@@ -84,7 +91,42 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_chat_messages_topic_id
     ON chat_messages (topic_id, created_at, id);
+
+  CREATE TABLE IF NOT EXISTS revision_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic_id TEXT NOT NULL,
+    tier TEXT NOT NULL CHECK (tier IN ('easy', 'medium', 'hard', 'tricky')),
+    stage INTEGER NOT NULL,
+    due_date_utc TEXT NOT NULL,
+    completed_at_utc TEXT,
+    created_at_utc TEXT NOT NULL,
+    UNIQUE(topic_id, stage)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_revision_items_due
+    ON revision_items (completed_at_utc, due_date_utc);
+
+  CREATE TABLE IF NOT EXISTS daily_goals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date_utc TEXT NOT NULL,
+    topic_id TEXT,
+    title TEXT NOT NULL,
+    completed_at_utc TEXT,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at_utc TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_daily_goals_date
+    ON daily_goals (date_utc, position, id);
 `);
+
+ensureColumn("topics", "done", "INTEGER NOT NULL DEFAULT 0");
+ensureColumn("topics", "tier", "TEXT");
+ensureColumn("topics", "mistake_note", "TEXT NOT NULL DEFAULT ''");
+ensureColumn("topics", "done_at_utc", "TEXT");
+db.prepare(
+  "UPDATE topics SET done = CASE WHEN progress = 'revised' THEN 1 ELSE 0 END WHERE done = 0 AND progress = 'revised'"
+).run();
 
 export function upsertSheet(sections: SheetSection[], topics: SheetProblem[]) {
   const insertSection = db.prepare(`
@@ -103,9 +145,17 @@ export function upsertSheet(sections: SheetSection[], topics: SheetProblem[]) {
   const insertTopic = db.prepare(`
     INSERT INTO topics (
       id, name, section_id, section_name, subcategory_id, subcategory_name,
-      article, youtube, leetcode, plus, editorial, link, difficulty, position, progress
+      article, youtube, leetcode, plus, editorial, link, difficulty, position,
+      progress, done, tier, mistake_note, done_at_utc
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT progress FROM topics WHERE id = ?), 'todo'))
+    VALUES (
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+      COALESCE((SELECT progress FROM topics WHERE id = ?), 'todo'),
+      COALESCE((SELECT done FROM topics WHERE id = ?), 0),
+      (SELECT tier FROM topics WHERE id = ?),
+      COALESCE((SELECT mistake_note FROM topics WHERE id = ?), ''),
+      (SELECT done_at_utc FROM topics WHERE id = ?)
+    )
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
       section_id = excluded.section_id,
@@ -156,6 +206,10 @@ export function upsertSheet(sections: SheetSection[], topics: SheetProblem[]) {
         topic.link || null,
         topic.difficulty || null,
         topicIndex,
+        topic.id,
+        topic.id,
+        topic.id,
+        topic.id,
         topic.id
       );
     });
@@ -210,6 +264,7 @@ export function getTopics(filters: {
   sectionId?: string;
   subcategoryId?: string;
   query?: string;
+  tier?: TierFilter;
 }): SheetProblem[] {
   const clauses: string[] = [];
   const values: SQLInputValue[] = [];
@@ -225,6 +280,12 @@ export function getTopics(filters: {
     clauses.push("(LOWER(name) LIKE ? OR LOWER(section_name) LIKE ? OR LOWER(subcategory_name) LIKE ?)");
     const q = `%${filters.query.toLowerCase()}%`;
     values.push(q, q, q);
+  }
+  if (filters.tier === "unassigned") {
+    clauses.push("tier IS NULL");
+  } else if (filters.tier) {
+    clauses.push("tier = ?");
+    values.push(filters.tier);
   }
 
   const rows = db
@@ -244,8 +305,54 @@ export function getTopic(id: string): SheetProblem | undefined {
   return row ? mapTopicRow(row) : undefined;
 }
 
-export function setProgress(id: string, progress: ProgressState) {
-  db.prepare("UPDATE topics SET progress = ? WHERE id = ?").run(progress, id);
+export function setTopicDone(id: string, done: boolean) {
+  const topic = getTopic(id);
+  if (!topic) throw new Error("Topic not found");
+  if (done && !topic.tier) {
+    throw new Error("Choose a tier first so revisions can be scheduled.");
+  }
+
+  const doneAt = done ? new Date().toISOString() : null;
+  db.prepare(
+    `UPDATE topics
+     SET done = ?, progress = ?, done_at_utc = CASE WHEN ? = 1 THEN COALESCE(done_at_utc, ?) ELSE NULL END
+     WHERE id = ?`
+  ).run(done ? 1 : 0, done ? "revised" : "todo", done ? 1 : 0, doneAt, id);
+
+  if (done) {
+    scheduleRevisions(id, topic.tier!, utcToday());
+  } else {
+    db.prepare(
+      "DELETE FROM revision_items WHERE topic_id = ? AND completed_at_utc IS NULL"
+    ).run(id);
+  }
+
+  return getTopic(id)!;
+}
+
+export function setTopicTier(id: string, tier: string | null) {
+  const normalized = normalizeTier(tier);
+  db.prepare("UPDATE topics SET tier = ? WHERE id = ?").run(normalized, id);
+  const topic = getTopic(id);
+  if (!topic) throw new Error("Topic not found");
+  if (topic.done && topic.tier) {
+    const doneAtRow = db
+      .prepare("SELECT done_at_utc FROM topics WHERE id = ?")
+      .get(id) as { done_at_utc: string | null } | undefined;
+    const baseDate = doneAtRow?.done_at_utc
+      ? doneAtRow.done_at_utc.slice(0, 10)
+      : utcToday();
+    db.prepare(
+      "DELETE FROM revision_items WHERE topic_id = ? AND completed_at_utc IS NULL"
+    ).run(id);
+    scheduleRevisions(id, topic.tier, baseDate);
+  }
+  return getTopic(id)!;
+}
+
+export function setTopicNote(id: string, note: string) {
+  db.prepare("UPDATE topics SET mistake_note = ? WHERE id = ?").run(note, id);
+  return getTopic(id);
 }
 
 export function getProgressSummary(): ProgressSummary {
@@ -253,21 +360,19 @@ export function getProgressSummary(): ProgressSummary {
     .prepare(
       `SELECT
         COUNT(*) AS total,
-        COALESCE(SUM(CASE WHEN progress = 'revised' THEN 1 ELSE 0 END), 0) AS revised,
-        COALESCE(SUM(CASE WHEN progress = 'learning' THEN 1 ELSE 0 END), 0) AS learning,
-        COALESCE(SUM(CASE WHEN progress = 'todo' THEN 1 ELSE 0 END), 0) AS todo
+        COALESCE(SUM(CASE WHEN done = 1 THEN 1 ELSE 0 END), 0) AS done
        FROM topics`
     )
     .get() as {
     total: number;
-    revised: number;
-    learning: number;
-    todo: number;
+    done: number;
   };
 
   return {
-    ...row,
-    percentage: row.total > 0 ? Math.round((row.revised / row.total) * 100) : 0
+    total: row.total,
+    done: row.done,
+    remaining: row.total - row.done,
+    percentage: row.total > 0 ? Math.round((row.done / row.total) * 100) : 0
   };
 }
 
@@ -389,6 +494,101 @@ export function clearChatMessages(topicId: string) {
   db.prepare("DELETE FROM chat_messages WHERE topic_id = ?").run(topicId);
 }
 
+export function getTopicRevisions(topicId: string): RevisionItem[] {
+  return mapRevisionRows(
+    db
+      .prepare(
+        `SELECT r.*, t.name AS topic_name, t.section_name, t.subcategory_name, t.mistake_note
+         FROM revision_items r
+         JOIN topics t ON t.id = r.topic_id
+         WHERE r.topic_id = ?
+         ORDER BY r.stage`
+      )
+      .all(topicId) as unknown as RevisionRow[]
+  );
+}
+
+export function getTodaySchedule() {
+  const today = utcToday();
+  return {
+    todayUtc: today,
+    revisions: getDueRevisions(today),
+    goals: getGoals(today)
+  };
+}
+
+export function completeRevision(id: number) {
+  db.prepare(
+    "UPDATE revision_items SET completed_at_utc = COALESCE(completed_at_utc, ?) WHERE id = ?"
+  ).run(new Date().toISOString(), id);
+}
+
+export function getGoals(dateUtc = utcToday()): DailyGoal[] {
+  const rows = db
+    .prepare(
+      `SELECT g.*, t.name AS topic_name
+       FROM daily_goals g
+       LEFT JOIN topics t ON t.id = g.topic_id
+       WHERE g.date_utc = ?
+       ORDER BY g.position, g.id`
+    )
+    .all(dateUtc) as unknown as GoalRow[];
+  return rows.map(mapGoalRow);
+}
+
+export function createGoal(input: {
+  dateUtc?: string;
+  topicId?: string;
+  title?: string;
+}) {
+  const dateUtc = input.dateUtc || utcToday();
+  const topic = input.topicId ? getTopic(input.topicId) : undefined;
+  const title = (input.title || topic?.name || "").trim();
+  if (!title) throw new Error("Goal title is required.");
+  const positionRow = db
+    .prepare(
+      "SELECT COALESCE(MAX(position), -1) + 1 AS position FROM daily_goals WHERE date_utc = ?"
+    )
+    .get(dateUtc) as { position: number };
+  const result = db
+    .prepare(
+      `INSERT INTO daily_goals (date_utc, topic_id, title, position, created_at_utc)
+       VALUES (?, ?, ?, ?, ?)`
+    )
+    .run(
+      dateUtc,
+      input.topicId || null,
+      title,
+      positionRow.position,
+      new Date().toISOString()
+    );
+  return getGoal(Number(result.lastInsertRowid));
+}
+
+export function updateGoal(
+  id: number,
+  input: { title?: string; completed?: boolean }
+) {
+  const current = getGoal(id);
+  if (!current) throw new Error("Goal not found.");
+  const title = input.title === undefined ? current.title : input.title.trim();
+  if (!title) throw new Error("Goal title is required.");
+  const completedAt =
+    input.completed === undefined
+      ? current.completedAtUtc || null
+      : input.completed
+        ? new Date().toISOString()
+        : null;
+  db.prepare(
+    "UPDATE daily_goals SET title = ?, completed_at_utc = ? WHERE id = ?"
+  ).run(title, completedAt, id);
+  return getGoal(id);
+}
+
+export function deleteGoal(id: number) {
+  db.prepare("DELETE FROM daily_goals WHERE id = ?").run(id);
+}
+
 interface TopicRow {
   id: string;
   name: string;
@@ -403,7 +603,10 @@ interface TopicRow {
   editorial: string | null;
   link: string | null;
   difficulty: string | null;
-  progress: ProgressState;
+  progress: string;
+  done: number;
+  tier: SheetProblem["tier"] | null;
+  mistake_note: string | null;
 }
 
 function mapTopicRow(row: TopicRow): SheetProblem {
@@ -421,6 +624,137 @@ function mapTopicRow(row: TopicRow): SheetProblem {
     categoryName: row.section_name,
     subcategoryId: row.subcategory_id,
     subcategoryName: row.subcategory_name,
-    progress: row.progress
+    done: Boolean(row.done),
+    tier: row.tier || undefined,
+    mistakeNote: row.mistake_note || ""
+  };
+}
+
+function scheduleRevisions(topicId: string, tier: TopicTier, baseDate: string) {
+  const offsets = tierOffsets(tier);
+  if (!offsets.length) return;
+  const insert = db.prepare(
+    `INSERT INTO revision_items (topic_id, tier, stage, due_date_utc, created_at_utc)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(topic_id, stage) DO UPDATE SET
+      tier = excluded.tier,
+      due_date_utc = excluded.due_date_utc`
+  );
+  const now = new Date().toISOString();
+  offsets.forEach((days, index) => {
+    insert.run(topicId, tier, index + 1, addUtcDays(baseDate, days), now);
+  });
+}
+
+function getDueRevisions(todayUtc: string): RevisionItem[] {
+  return mapRevisionRows(
+    db
+      .prepare(
+        `SELECT r.*, t.name AS topic_name, t.section_name, t.subcategory_name, t.mistake_note
+         FROM revision_items r
+         JOIN topics t ON t.id = r.topic_id
+         WHERE r.completed_at_utc IS NULL AND r.due_date_utc <= ?
+         ORDER BY r.due_date_utc, r.stage, t.position`
+      )
+      .all(todayUtc) as unknown as RevisionRow[]
+  );
+}
+
+function tierOffsets(tier?: TopicTier) {
+  if (tier === "easy") return [10, 30];
+  if (tier === "medium") return [7, 20];
+  if (tier === "hard" || tier === "tricky") return [2, 10, 30];
+  return [];
+}
+
+export function utcToday() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function addUtcDays(dateUtc: string, days: number) {
+  const date = new Date(`${dateUtc}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function normalizeTier(tier: string | null) {
+  if (tier === "easy" || tier === "medium" || tier === "hard" || tier === "tricky") {
+    return tier;
+  }
+  return null;
+}
+
+function ensureColumn(table: string, column: string, definition: string) {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+    name: string;
+  }>;
+  if (!rows.some((row) => row.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
+interface RevisionRow {
+  id: number;
+  topic_id: string;
+  topic_name: string;
+  section_name: string;
+  subcategory_name: string;
+  tier: TopicTier;
+  stage: number;
+  due_date_utc: string;
+  completed_at_utc: string | null;
+  created_at_utc: string;
+  mistake_note: string | null;
+}
+
+function mapRevisionRows(rows: RevisionRow[]): RevisionItem[] {
+  return rows.map((row) => ({
+    id: row.id,
+    topicId: row.topic_id,
+    topicName: row.topic_name,
+    categoryName: row.section_name,
+    subcategoryName: row.subcategory_name,
+    tier: row.tier,
+    stage: row.stage,
+    dueDateUtc: row.due_date_utc,
+    completedAtUtc: row.completed_at_utc || undefined,
+    createdAtUtc: row.created_at_utc,
+    mistakeNote: row.mistake_note || ""
+  }));
+}
+
+interface GoalRow {
+  id: number;
+  date_utc: string;
+  topic_id: string | null;
+  topic_name: string | null;
+  title: string;
+  completed_at_utc: string | null;
+  position: number;
+  created_at_utc: string;
+}
+
+function getGoal(id: number): DailyGoal | undefined {
+  const row = db
+    .prepare(
+      `SELECT g.*, t.name AS topic_name
+       FROM daily_goals g
+       LEFT JOIN topics t ON t.id = g.topic_id
+       WHERE g.id = ?`
+    )
+    .get(id) as GoalRow | undefined;
+  return row ? mapGoalRow(row) : undefined;
+}
+
+function mapGoalRow(row: GoalRow): DailyGoal {
+  return {
+    id: row.id,
+    dateUtc: row.date_utc,
+    topicId: row.topic_id || undefined,
+    topicName: row.topic_name || undefined,
+    title: row.title,
+    completedAtUtc: row.completed_at_utc || undefined,
+    position: row.position,
+    createdAtUtc: row.created_at_utc
   };
 }

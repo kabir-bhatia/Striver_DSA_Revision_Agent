@@ -2,20 +2,27 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import {
   BookOpen,
+  CalendarDays,
+  Check,
   CheckCircle2,
+  Circle,
   Code2,
   ExternalLink,
   Loader2,
   MessageSquare,
   PlayCircle,
+  Plus,
   RefreshCcw,
+  Save,
   Search,
   Sparkles,
   Trash2
 } from "lucide-react";
 import "./styles.css";
 
-type ProgressState = "todo" | "learning" | "revised";
+type TopicTier = "easy" | "medium" | "hard" | "tricky";
+type TierFilter = TopicTier | "unassigned" | "";
+type AppView = "browse" | "today";
 
 interface Section {
   id: string;
@@ -34,7 +41,9 @@ interface Topic {
   categoryName: string;
   subcategoryId: string;
   subcategoryName: string;
-  progress: ProgressState;
+  done: boolean;
+  tier?: TopicTier;
+  mistakeNote: string;
 }
 
 interface StudyBundle {
@@ -70,13 +79,51 @@ interface ChatMessage {
 
 interface ProgressSummary {
   total: number;
-  revised: number;
-  learning: number;
-  todo: number;
+  done: number;
+  remaining: number;
   percentage: number;
 }
 
+interface RevisionItem {
+  id: number;
+  topicId: string;
+  topicName: string;
+  categoryName: string;
+  subcategoryName: string;
+  tier: TopicTier;
+  stage: number;
+  dueDateUtc: string;
+  completedAtUtc?: string;
+  createdAtUtc: string;
+  mistakeNote: string;
+}
+
+interface DailyGoal {
+  id: number;
+  dateUtc: string;
+  topicId?: string;
+  topicName?: string;
+  title: string;
+  completedAtUtc?: string;
+  position: number;
+  createdAtUtc: string;
+}
+
+interface TodaySchedule {
+  todayUtc: string;
+  revisions: RevisionItem[];
+  goals: DailyGoal[];
+}
+
+const tiers: Array<{ value: TopicTier; label: string }> = [
+  { value: "easy", label: "Easy" },
+  { value: "medium", label: "Medium" },
+  { value: "hard", label: "Hard" },
+  { value: "tricky", label: "Tricky" }
+];
+
 function App() {
+  const [view, setView] = React.useState<AppView>("browse");
   const [sections, setSections] = React.useState<Section[]>([]);
   const [topics, setTopics] = React.useState<Topic[]>([]);
   const [selectedSection, setSelectedSection] = React.useState<string>("");
@@ -87,12 +134,16 @@ function App() {
   const [chatInput, setChatInput] = React.useState("");
   const [progress, setProgress] = React.useState<ProgressSummary>({
     total: 0,
-    revised: 0,
-    learning: 0,
-    todo: 0,
+    done: 0,
+    remaining: 0,
     percentage: 0
   });
+  const [revisions, setRevisions] = React.useState<RevisionItem[]>([]);
+  const [today, setToday] = React.useState<TodaySchedule | undefined>();
+  const [goalTitle, setGoalTitle] = React.useState("");
+  const [noteDraft, setNoteDraft] = React.useState("");
   const [query, setQuery] = React.useState("");
+  const [tierFilter, setTierFilter] = React.useState<TierFilter>("");
   const [loadingSections, setLoadingSections] = React.useState(true);
   const [loadingTopics, setLoadingTopics] = React.useState(false);
   const [loadingStudy, setLoadingStudy] = React.useState(false);
@@ -101,14 +152,18 @@ function App() {
 
   React.useEffect(() => {
     loadSections();
+    loadToday();
   }, []);
 
   React.useEffect(() => {
     loadTopics();
-  }, [selectedSection, selectedSubcategory, query]);
+  }, [selectedSection, selectedSubcategory, query, tierFilter]);
 
   React.useEffect(() => {
-    if (selectedTopic) loadSavedChat(selectedTopic.id);
+    if (!selectedTopic) return;
+    setNoteDraft(selectedTopic.mistakeNote);
+    loadSavedChat(selectedTopic.id);
+    loadRevisions(selectedTopic.id);
   }, [selectedTopic?.id]);
 
   async function loadSections() {
@@ -134,6 +189,7 @@ function App() {
       if (selectedSection) params.set("sectionId", selectedSection);
       if (selectedSubcategory) params.set("subcategoryId", selectedSubcategory);
       if (query) params.set("q", query);
+      if (tierFilter) params.set("tier", tierFilter);
       const data = await api<Topic[]>(`/api/topics?${params.toString()}`);
       setTopics(data);
       if (!selectedTopic || !data.some((topic) => topic.id === selectedTopic.id)) {
@@ -156,11 +212,17 @@ function App() {
     });
     await loadSections();
     await loadProgress();
+    await loadToday();
   }
 
   async function loadProgress() {
     const data = await api<ProgressSummary>("/api/progress");
     setProgress(data);
+  }
+
+  async function loadToday() {
+    const data = await api<TodaySchedule>("/api/schedule/today");
+    setToday(data);
   }
 
   async function loadSavedChat(topicId: string) {
@@ -172,6 +234,11 @@ function App() {
       setChat([]);
       setError(errorMessage(err));
     }
+  }
+
+  async function loadRevisions(topicId: string) {
+    const data = await api<RevisionItem[]>(`/api/topics/${topicId}/revisions`);
+    setRevisions(data);
   }
 
   async function loadStudy(topic = selectedTopic, force = false) {
@@ -193,19 +260,49 @@ function App() {
     }
   }
 
-  async function updateProgress(topic: Topic, progress: ProgressState) {
-    const updated = await api<Topic>(`/api/topics/${topic.id}/progress`, {
+  async function updateDone(topic: Topic, done: boolean) {
+    if (done && !topic.tier) {
+      setError("Choose a tier first so revisions can be scheduled.");
+      return;
+    }
+    const updated = await api<Topic>(`/api/topics/${topic.id}/done`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ progress })
+      body: JSON.stringify({ done })
     });
-    setTopics((items) =>
-      items.map((item) => (item.id === updated.id ? { ...item, progress } : item))
-    );
-    setSelectedTopic((current) =>
-      current?.id === updated.id ? { ...current, progress } : current
-    );
+    applyTopicUpdate(updated);
     await loadProgress();
+    await loadRevisions(updated.id);
+    await loadToday();
+  }
+
+  async function updateTier(topic: Topic, tier: string) {
+    const updated = await api<Topic>(`/api/topics/${topic.id}/tier`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ tier: tier || null })
+    });
+    applyTopicUpdate(updated);
+    await loadRevisions(updated.id);
+    await loadToday();
+  }
+
+  async function saveNote(topic = selectedTopic) {
+    if (!topic) return;
+    const updated = await api<Topic>(`/api/topics/${topic.id}/note`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ note: noteDraft })
+    });
+    applyTopicUpdate(updated);
+    await loadToday();
+  }
+
+  function applyTopicUpdate(updated: Topic) {
+    setTopics((items) =>
+      items.map((item) => (item.id === updated.id ? updated : item))
+    );
+    setSelectedTopic((current) => (current?.id === updated.id ? updated : current));
   }
 
   async function sendChat() {
@@ -243,6 +340,49 @@ function App() {
     }
   }
 
+  async function completeRevision(id: number) {
+    const data = await api<TodaySchedule>(`/api/revisions/${id}/complete`, {
+      method: "POST"
+    });
+    setToday(data);
+    if (selectedTopic) await loadRevisions(selectedTopic.id);
+  }
+
+  async function addGoal() {
+    if (!goalTitle.trim() || !today) return;
+    await api<DailyGoal>("/api/goals", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dateUtc: today.todayUtc, title: goalTitle.trim() })
+    });
+    setGoalTitle("");
+    await loadToday();
+  }
+
+  async function addSelectedTopicGoal() {
+    if (!selectedTopic || !today) return;
+    await api<DailyGoal>("/api/goals", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dateUtc: today.todayUtc, topicId: selectedTopic.id })
+    });
+    await loadToday();
+  }
+
+  async function toggleGoal(goal: DailyGoal) {
+    await api<DailyGoal>(`/api/goals/${goal.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ completed: !goal.completedAtUtc })
+    });
+    await loadToday();
+  }
+
+  async function deleteGoal(goal: DailyGoal) {
+    await api(`/api/goals/${goal.id}`, { method: "DELETE" });
+    await loadToday();
+  }
+
   const selectedSectionData = sections.find((section) => section.id === selectedSection);
 
   return (
@@ -260,6 +400,15 @@ function App() {
 
         <ProgressCard progress={progress} />
 
+        <div className="view-switch">
+          <button className={view === "browse" ? "active" : ""} onClick={() => setView("browse")}>
+            Browse
+          </button>
+          <button className={view === "today" ? "active" : ""} onClick={() => setView("today")}>
+            Today
+          </button>
+        </div>
+
         <label className="search-box">
           <Search size={17} />
           <input
@@ -276,6 +425,7 @@ function App() {
               key={section.id}
               className={`section-button ${selectedSection === section.id ? "active" : ""}`}
               onClick={() => {
+                setView("browse");
                 setSelectedSection(section.id);
                 setSelectedSubcategory("");
                 setStudy(undefined);
@@ -289,61 +439,41 @@ function App() {
       </aside>
 
       <section className="topic-pane">
-        <div className="pane-header">
-          <div>
-            <p className="eyebrow">Sections</p>
-            <h2>{selectedSectionData?.name || "Loading"}</h2>
-          </div>
-          <span className="count-pill">{topics.length} topics</span>
-        </div>
-
-        <div className="subcat-row">
-          <button
-            className={!selectedSubcategory ? "active" : ""}
-            onClick={() => setSelectedSubcategory("")}
-          >
-            All
-          </button>
-          {selectedSectionData?.subcategories.map((subcategory) => (
-            <button
-              key={subcategory.id}
-              className={selectedSubcategory === subcategory.id ? "active" : ""}
-              onClick={() => setSelectedSubcategory(subcategory.id)}
-            >
-              {subcategory.name}
-            </button>
-          ))}
-        </div>
-
-        <div className="topic-list">
-          {loadingTopics && <InlineLoading label="Loading topics" />}
-          {!loadingTopics && topics.length === 0 && (
-            <p className="empty-state">No topics match this filter.</p>
-          )}
-          {topics.map((topic) => (
-            <button
-              key={topic.id}
-              className={`topic-row ${selectedTopic?.id === topic.id ? "active" : ""}`}
-              onClick={() => {
-                setSelectedTopic(topic);
-                setStudy(undefined);
-              }}
-            >
-              <span className={`status-dot ${topic.progress}`} />
-              <span>
-                <strong>{topic.name}</strong>
-                <small>{topic.subcategoryName}</small>
-              </span>
-              <em>{topic.difficulty || "Any"}</em>
-            </button>
-          ))}
-        </div>
+        {view === "browse" ? (
+          <BrowseTopics
+            selectedSectionData={selectedSectionData}
+            selectedSubcategory={selectedSubcategory}
+            setSelectedSubcategory={setSelectedSubcategory}
+            topics={topics}
+            selectedTopic={selectedTopic}
+            setSelectedTopic={(topic) => {
+              setSelectedTopic(topic);
+              setStudy(undefined);
+            }}
+            tierFilter={tierFilter}
+            setTierFilter={setTierFilter}
+            loadingTopics={loadingTopics}
+          />
+        ) : (
+          <TodayRevisions today={today} onComplete={completeRevision} />
+        )}
       </section>
 
       <section className="detail-pane">
         {error && <div className="error-banner">{error}</div>}
 
-        {selectedTopic ? (
+        {view === "today" ? (
+          <TodayGoals
+            today={today}
+            goalTitle={goalTitle}
+            setGoalTitle={setGoalTitle}
+            addGoal={addGoal}
+            selectedTopic={selectedTopic}
+            addSelectedTopicGoal={addSelectedTopicGoal}
+            toggleGoal={toggleGoal}
+            deleteGoal={deleteGoal}
+          />
+        ) : selectedTopic ? (
           <>
             <div className="detail-header">
               <div>
@@ -366,15 +496,24 @@ function App() {
             </div>
 
             <div className="control-row">
-              <select
-                value={selectedTopic.progress}
-                onChange={(event) =>
-                  updateProgress(selectedTopic, event.target.value as ProgressState)
-                }
+              <button
+                className={`check-button ${selectedTopic.done ? "checked" : ""}`}
+                onClick={() => updateDone(selectedTopic, !selectedTopic.done)}
+                title="Toggle done"
               >
-                <option value="todo">Todo</option>
-                <option value="learning">Learning</option>
-                <option value="revised">Revised</option>
+                {selectedTopic.done ? <Check size={18} /> : <Circle size={18} />}
+                Done
+              </button>
+              <select
+                value={selectedTopic.tier || ""}
+                onChange={(event) => updateTier(selectedTopic, event.target.value)}
+              >
+                <option value="">Unassigned tier</option>
+                {tiers.map((tier) => (
+                  <option value={tier.value} key={tier.value}>
+                    {tier.label}
+                  </option>
+                ))}
               </select>
               <button className="primary-button" onClick={() => loadStudy()}>
                 {loadingStudy ? <Loader2 className="spin" size={17} /> : <Sparkles size={17} />}
@@ -384,6 +523,20 @@ function App() {
                 <RefreshCcw size={17} />
               </button>
             </div>
+
+            <section className="study-section wide note-panel">
+              <h3>Mistake Note</h3>
+              <textarea
+                value={noteDraft}
+                onChange={(event) => setNoteDraft(event.target.value)}
+                placeholder="Optional: what did you specifically do wrong in this question?"
+              />
+              <button className="secondary-button" onClick={() => saveNote()}>
+                <Save size={16} /> Save note
+              </button>
+            </section>
+
+            <RevisionPreview revisions={revisions} />
 
             {loadingStudy && <StudySkeleton />}
             {study && <StudyBundleView study={study} />}
@@ -430,6 +583,191 @@ function App() {
   );
 }
 
+function BrowseTopics(props: {
+  selectedSectionData?: Section;
+  selectedSubcategory: string;
+  setSelectedSubcategory: (id: string) => void;
+  topics: Topic[];
+  selectedTopic?: Topic;
+  setSelectedTopic: (topic: Topic) => void;
+  tierFilter: TierFilter;
+  setTierFilter: (filter: TierFilter) => void;
+  loadingTopics: boolean;
+}) {
+  return (
+    <>
+      <div className="pane-header">
+        <div>
+          <p className="eyebrow">Sections</p>
+          <h2>{props.selectedSectionData?.name || "Loading"}</h2>
+        </div>
+        <span className="count-pill">{props.topics.length} topics</span>
+      </div>
+
+      <div className="subcat-row">
+        <button
+          className={!props.selectedSubcategory ? "active" : ""}
+          onClick={() => props.setSelectedSubcategory("")}
+        >
+          All
+        </button>
+        {props.selectedSectionData?.subcategories.map((subcategory) => (
+          <button
+            key={subcategory.id}
+            className={props.selectedSubcategory === subcategory.id ? "active" : ""}
+            onClick={() => props.setSelectedSubcategory(subcategory.id)}
+          >
+            {subcategory.name}
+          </button>
+        ))}
+      </div>
+
+      <div className="tier-filter-row">
+        <button className={!props.tierFilter ? "active" : ""} onClick={() => props.setTierFilter("")}>
+          All tiers
+        </button>
+        {tiers.map((tier) => (
+          <button
+            key={tier.value}
+            className={props.tierFilter === tier.value ? "active" : ""}
+            onClick={() => props.setTierFilter(tier.value)}
+          >
+            {tier.label}
+          </button>
+        ))}
+        <button
+          className={props.tierFilter === "unassigned" ? "active" : ""}
+          onClick={() => props.setTierFilter("unassigned")}
+        >
+          Unassigned
+        </button>
+      </div>
+
+      <div className="topic-list">
+        {props.loadingTopics && <InlineLoading label="Loading topics" />}
+        {!props.loadingTopics && props.topics.length === 0 && (
+          <p className="empty-state">No topics match this filter.</p>
+        )}
+        {props.topics.map((topic) => (
+          <button
+            key={topic.id}
+            className={`topic-row ${props.selectedTopic?.id === topic.id ? "active" : ""}`}
+            onClick={() => props.setSelectedTopic(topic)}
+          >
+            <span className={`row-check ${topic.done ? "checked" : ""}`}>
+              {topic.done ? <Check size={13} /> : null}
+            </span>
+            <span>
+              <strong>{topic.name}</strong>
+              <small>{topic.subcategoryName}</small>
+            </span>
+            <em>{topic.tier ? tierLabel(topic.tier) : "Unassigned"}</em>
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function TodayRevisions({
+  today,
+  onComplete
+}: {
+  today?: TodaySchedule;
+  onComplete: (id: number) => void;
+}) {
+  return (
+    <>
+      <div className="pane-header">
+        <div>
+          <p className="eyebrow">UTC Schedule</p>
+          <h2>Today, {today?.todayUtc || "..."} UTC</h2>
+        </div>
+        <span className="count-pill">{today?.revisions.length || 0} due</span>
+      </div>
+
+      <div className="today-list">
+        {!today && <InlineLoading label="Loading schedule" />}
+        {today?.revisions.length === 0 && (
+          <p className="empty-state">No due or overdue revisions for UTC today.</p>
+        )}
+        {today?.revisions.map((revision) => (
+          <article className="today-card" key={revision.id}>
+            <div>
+              <strong>{revision.topicName}</strong>
+              <p>
+                {tierLabel(revision.tier)} | Revision {revision.stage} | Due {revision.dueDateUtc}
+              </p>
+              {revision.mistakeNote && <small>{revision.mistakeNote}</small>}
+            </div>
+            <button className="secondary-button" onClick={() => onComplete(revision.id)}>
+              <Check size={16} /> Done
+            </button>
+          </article>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function TodayGoals(props: {
+  today?: TodaySchedule;
+  goalTitle: string;
+  setGoalTitle: (value: string) => void;
+  addGoal: () => void;
+  selectedTopic?: Topic;
+  addSelectedTopicGoal: () => void;
+  toggleGoal: (goal: DailyGoal) => void;
+  deleteGoal: (goal: DailyGoal) => void;
+}) {
+  return (
+    <section className="today-goals">
+      <div className="detail-header">
+        <div>
+          <p className="eyebrow">UTC Daily Target</p>
+          <h2>Today’s Goal</h2>
+          <p>{props.today?.todayUtc || "..."} UTC</p>
+        </div>
+      </div>
+
+      <div className="goal-input-row">
+        <input
+          value={props.goalTitle}
+          onChange={(event) => props.setGoalTitle(event.target.value)}
+          placeholder="Add a custom goal for today"
+        />
+        <button className="primary-button" onClick={props.addGoal}>
+          <Plus size={16} /> Add
+        </button>
+      </div>
+      <button className="secondary-button" onClick={props.addSelectedTopicGoal} disabled={!props.selectedTopic}>
+        <CalendarDays size={16} />
+        Add selected topic as goal
+      </button>
+
+      <div className="goal-list">
+        {props.today?.goals.length === 0 && (
+          <p className="empty-state">No goals added for UTC today.</p>
+        )}
+        {props.today?.goals.map((goal) => (
+          <article className={`goal-row ${goal.completedAtUtc ? "done" : ""}`} key={goal.id}>
+            <button className="mini-check" onClick={() => props.toggleGoal(goal)}>
+              {goal.completedAtUtc ? <Check size={14} /> : null}
+            </button>
+            <div>
+              <strong>{goal.title}</strong>
+              {goal.topicName && <small>Linked topic: {goal.topicName}</small>}
+            </div>
+            <button className="icon-button subtle" onClick={() => props.deleteGoal(goal)} title="Delete goal">
+              <Trash2 size={16} />
+            </button>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function ProgressCard({ progress }: { progress: ProgressSummary }) {
   return (
     <section className="progress-card" aria-label="Overall progress">
@@ -444,11 +782,25 @@ function ProgressCard({ progress }: { progress: ProgressSummary }) {
         />
       </div>
       <p>
-        {progress.revised} / {progress.total} completed
+        {progress.done} / {progress.total} done
       </p>
-      <small>
-        {progress.learning} learning | {progress.todo} todo
-      </small>
+      <small>{progress.remaining} remaining</small>
+    </section>
+  );
+}
+
+function RevisionPreview({ revisions }: { revisions: RevisionItem[] }) {
+  if (!revisions.length) return null;
+  return (
+    <section className="study-section wide revision-preview">
+      <h3>UTC Revision Timeline</h3>
+      <div className="revision-chips">
+        {revisions.map((revision) => (
+          <span key={revision.id} className={revision.completedAtUtc ? "complete" : ""}>
+            R{revision.stage}: {revision.dueDateUtc}
+          </span>
+        ))}
+      </div>
     </section>
   );
 }
@@ -543,6 +895,10 @@ function InlineLoading({ label }: { label: string }) {
       {label}
     </span>
   );
+}
+
+function tierLabel(tier: TopicTier) {
+  return tiers.find((item) => item.value === tier)?.label || tier;
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {

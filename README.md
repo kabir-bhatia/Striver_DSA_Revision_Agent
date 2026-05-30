@@ -6,9 +6,13 @@ A local web app that turns Striver's A2Z DSA sheet into a searchable revision tu
 
 - Browse Striver A2Z sections, sub-sections, and topics.
 - Generate C++-first study bundles from Take U Forward notes and available video transcripts.
-- Track progress with `todo`, `learning`, and `revised`.
+- Track progress with a simple done checkmark.
 - See overall completion progress from the synced sheet total.
 - Persist topic chat history locally across restarts.
+- Assign revision tiers: Easy, Medium, Hard, and Tricky.
+- Automatically schedule revisions using UTC/GMT dates only.
+- Keep optional mistake notes per question.
+- Build a UTC-date-specific Today goal checklist.
 - Store all local state in SQLite.
 
 ## Requirements
@@ -99,10 +103,11 @@ data/striver-agent.sqlite
 That database stores:
 
 - Synced sheet metadata.
-- Progress states.
+- Done checkmarks, tiers, mistake notes, and revision schedules.
 - Cached topic resources.
 - Generated study bundles.
 - Saved per-topic chat messages.
+- UTC-date daily goals.
 
 This file is intentionally ignored by Git so every user has their own progress and chat history.
 
@@ -177,6 +182,25 @@ http://127.0.0.1:8787
 ```
 
 Their progress, cached summaries, and chat history will stay on their laptop in their own SQLite database.
+
+## Revision Scheduling Rules
+
+All schedule dates use UTC/GMT `+00:00`, not your local timezone.
+
+The app computes today with:
+
+```ts
+new Date().toISOString().slice(0, 10)
+```
+
+Revision intervals:
+
+- Easy: 10 days, 30 days.
+- Medium: 7 days, 20 days.
+- Hard: 2 days, 10 days, 30 days.
+- Tricky: 2 days, 10 days, 30 days.
+
+A topic must have a tier before it can be checked as done. Once checked as done, the app creates the revision timeline automatically.
 
 ## Useful Commands
 

@@ -1,4 +1,5 @@
-export type ProgressState = "todo" | "learning" | "revised";
+export type TopicTier = "easy" | "medium" | "hard" | "tricky";
+export type TierFilter = TopicTier | "unassigned";
 
 export interface SheetProblem {
   id: string;
@@ -14,7 +15,9 @@ export interface SheetProblem {
   categoryName: string;
   subcategoryId: string;
   subcategoryName: string;
-  progress: ProgressState;
+  done: boolean;
+  tier?: TopicTier;
+  mistakeNote: string;
 }
 
 export interface SheetSubcategory {
@@ -64,8 +67,38 @@ export interface ChatMessage {
 
 export interface ProgressSummary {
   total: number;
-  revised: number;
-  learning: number;
-  todo: number;
+  done: number;
+  remaining: number;
   percentage: number;
+}
+
+export interface RevisionItem {
+  id: number;
+  topicId: string;
+  topicName: string;
+  categoryName: string;
+  subcategoryName: string;
+  tier: TopicTier;
+  stage: number;
+  dueDateUtc: string;
+  completedAtUtc?: string;
+  createdAtUtc: string;
+  mistakeNote: string;
+}
+
+export interface DailyGoal {
+  id: number;
+  dateUtc: string;
+  topicId?: string;
+  topicName?: string;
+  title: string;
+  completedAtUtc?: string;
+  position: number;
+  createdAtUtc: string;
+}
+
+export interface TodaySchedule {
+  todayUtc: string;
+  revisions: RevisionItem[];
+  goals: DailyGoal[];
 }

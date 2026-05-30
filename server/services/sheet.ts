@@ -185,7 +185,8 @@ function normalizePayload(payload: RawSheetPayload) {
           categoryName: section.category_name,
           subcategoryId: subcategory.subcategory_id,
           subcategoryName: subcategory.subcategory_name,
-          progress: "todo"
+          done: false,
+          mistakeNote: ""
         });
       });
     });
