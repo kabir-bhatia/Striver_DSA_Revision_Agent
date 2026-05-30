@@ -7,5 +7,5 @@ export const config = {
   sheetUrl:
     "https://takeuforward.org/dsa/strivers-a2z-sheet-learn-dsa-a-to-z",
   geminiApiKey: process.env.GEMINI_API_KEY || "",
-  geminiModel: process.env.GEMINI_MODEL || "gemini-3.5-flash"
+  geminiModel: process.env.GEMINI_MODEL || "gemini-2.5-flash-lite"
 };
