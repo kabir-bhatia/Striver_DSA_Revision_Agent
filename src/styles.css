@@ -551,7 +551,7 @@ button:disabled {
 }
 
 .chat-messages {
-  max-height: 260px;
+  max-height: 650px;
   overflow: auto;
 }
 
