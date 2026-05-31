@@ -55,7 +55,7 @@ db.exec(`
     position INTEGER NOT NULL,
     progress TEXT NOT NULL DEFAULT 'todo',
     done INTEGER NOT NULL DEFAULT 0,
-    tier TEXT CHECK (tier IN ('easy', 'medium', 'hard', 'tricky')),
+    tier TEXT,
     mistake_note TEXT NOT NULL DEFAULT '',
     done_at_utc TEXT
   );
@@ -95,7 +95,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS revision_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     topic_id TEXT NOT NULL,
-    tier TEXT NOT NULL CHECK (tier IN ('easy', 'medium', 'hard', 'tricky')),
+    tier TEXT NOT NULL,
     stage INTEGER NOT NULL,
     due_date_utc TEXT NOT NULL,
     completed_at_utc TEXT,
@@ -119,6 +119,74 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_daily_goals_date
     ON daily_goals (date_utc, position, id);
 `);
+
+
+// Check and migrate schema version to allow 'very_easy' and remove old constraints
+db.exec(`
+  CREATE TABLE IF NOT EXISTS metadata (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+`);
+const schemaVersionRow = db.prepare("SELECT value FROM metadata WHERE key = 'schema_version'").get() as { value: string } | undefined;
+const schemaVersion = schemaVersionRow ? parseInt(schemaVersionRow.value, 10) : 0;
+
+if (schemaVersion < 2) {
+  try {
+    console.log("Migrating database tables to remove old tier CHECK constraints...");
+    db.exec(`
+      PRAGMA foreign_keys = OFF;
+      
+      -- Migrate topics
+      CREATE TABLE IF NOT EXISTS new_topics (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        section_id TEXT NOT NULL,
+        section_name TEXT NOT NULL,
+        subcategory_id TEXT NOT NULL,
+        subcategory_name TEXT NOT NULL,
+        article TEXT,
+        youtube TEXT,
+        leetcode TEXT,
+        plus TEXT,
+        editorial TEXT,
+        link TEXT,
+        difficulty TEXT,
+        position INTEGER NOT NULL,
+        progress TEXT NOT NULL DEFAULT 'todo',
+        done INTEGER NOT NULL DEFAULT 0,
+        tier TEXT,
+        mistake_note TEXT NOT NULL DEFAULT '',
+        done_at_utc TEXT
+      );
+      INSERT OR IGNORE INTO new_topics SELECT id, name, section_id, section_name, subcategory_id, subcategory_name, article, youtube, leetcode, plus, editorial, link, difficulty, position, progress, done, tier, mistake_note, done_at_utc FROM topics;
+      DROP TABLE topics;
+      ALTER TABLE new_topics RENAME TO topics;
+
+      -- Migrate revision_items
+      CREATE TABLE IF NOT EXISTS new_revision_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        topic_id TEXT NOT NULL,
+        tier TEXT NOT NULL,
+        stage INTEGER NOT NULL,
+        due_date_utc TEXT NOT NULL,
+        completed_at_utc TEXT,
+        created_at_utc TEXT NOT NULL,
+        UNIQUE(topic_id, stage)
+      );
+      INSERT OR IGNORE INTO new_revision_items SELECT id, topic_id, tier, stage, due_date_utc, completed_at_utc, created_at_utc FROM revision_items;
+      DROP TABLE revision_items;
+      ALTER TABLE new_revision_items RENAME TO revision_items;
+
+      PRAGMA foreign_keys = ON;
+    `);
+
+    db.prepare("INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', '2')").run();
+    console.log("Database successfully migrated to schema version 2.");
+  } catch (err) {
+    console.error("Migration failed:", err);
+  }
+}
 
 ensureColumn("topics", "done", "INTEGER NOT NULL DEFAULT 0");
 ensureColumn("topics", "tier", "TEXT");
@@ -320,6 +388,7 @@ export function setTopicDone(id: string, done: boolean) {
   ).run(done ? 1 : 0, done ? "revised" : "todo", done ? 1 : 0, doneAt, id);
 
   if (done) {
+    db.prepare("DELETE FROM revision_items WHERE topic_id = ? AND completed_at_utc IS NULL").run(id);
     scheduleRevisions(id, topic.tier!, utcToday());
   } else {
     db.prepare(
