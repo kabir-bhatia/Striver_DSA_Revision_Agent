@@ -18,7 +18,10 @@ import {
   Sparkles,
   Trash2
 } from "lucide-react";
+import { marked } from "marked";
 import "./styles.css";
+
+marked.setOptions({ breaks: true, gfm: true });
 
 type TopicTier = "easy" | "medium" | "hard" | "tricky";
 type TierFilter = TopicTier | "unassigned" | "";
@@ -359,6 +362,17 @@ function App() {
     await loadToday();
   }
 
+  async function addGoalFromTopic(topic: Topic) {
+    if (!today) return;
+    await api<DailyGoal>("/api/goals", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dateUtc: today.todayUtc, topicId: topic.id })
+    });
+    setGoalTitle("");
+    await loadToday();
+  }
+
   async function addSelectedTopicGoal() {
     if (!selectedTopic || !today) return;
     await api<DailyGoal>("/api/goals", {
@@ -468,6 +482,7 @@ function App() {
             goalTitle={goalTitle}
             setGoalTitle={setGoalTitle}
             addGoal={addGoal}
+            addGoalFromTopic={addGoalFromTopic}
             selectedTopic={selectedTopic}
             addSelectedTopicGoal={addSelectedTopicGoal}
             toggleGoal={toggleGoal}
@@ -557,7 +572,7 @@ function App() {
                 )}
                 {chat.map((message, index) => (
                   <div key={`${message.role}-${index}`} className={`chat-bubble ${message.role}`}>
-                    {message.content}
+                    <Md text={message.content} />
                   </div>
                 ))}
                 {chatLoading && <InlineLoading label="Thinking" />}
@@ -681,7 +696,7 @@ function TodayRevisions({
       <div className="pane-header">
         <div>
           <p className="eyebrow">UTC Schedule</p>
-          <h2>Today, {today?.todayUtc || "..."} UTC</h2>
+          <h2>Today, {today?.todayUtc ? formatDate(today.todayUtc) : "..."} UTC</h2>
         </div>
         <span className="count-pill">{today?.revisions.length || 0} due</span>
       </div>
@@ -696,7 +711,7 @@ function TodayRevisions({
             <div>
               <strong>{revision.topicName}</strong>
               <p>
-                {tierLabel(revision.tier)} | Revision {revision.stage} | Due {revision.dueDateUtc}
+                {tierLabel(revision.tier)} | Revision {revision.stage} | Due {formatDate(revision.dueDateUtc)}
               </p>
               {revision.mistakeNote && <small>{revision.mistakeNote}</small>}
             </div>
@@ -715,30 +730,92 @@ function TodayGoals(props: {
   goalTitle: string;
   setGoalTitle: (value: string) => void;
   addGoal: () => void;
+  addGoalFromTopic: (topic: Topic) => void;
   selectedTopic?: Topic;
   addSelectedTopicGoal: () => void;
   toggleGoal: (goal: DailyGoal) => void;
   deleteGoal: (goal: DailyGoal) => void;
 }) {
+  const [suggestions, setSuggestions] = React.useState<Topic[]>([]);
+  const [showSuggestions, setShowSuggestions] = React.useState(false);
+  const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wrapperRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const q = props.goalTitle.trim();
+    if (!q) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const data = await api<Topic[]>(`/api/topics?q=${encodeURIComponent(q)}`);
+        setSuggestions(data.slice(0, 10));
+        setShowSuggestions(data.length > 0);
+      } catch {
+        setSuggestions([]);
+      }
+    }, 300);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [props.goalTitle]);
+
+  function handleSuggestionClick(topic: Topic) {
+    setShowSuggestions(false);
+    setSuggestions([]);
+    props.addGoalFromTopic(topic);
+  }
+
+  function handleKeyDown(event: React.KeyboardEvent) {
+    if (event.key === "Escape") setShowSuggestions(false);
+    if (event.key === "Enter") {
+      setShowSuggestions(false);
+      props.addGoal();
+    }
+  }
+
   return (
     <section className="today-goals">
       <div className="detail-header">
         <div>
           <p className="eyebrow">UTC Daily Target</p>
-          <h2>Today’s Goal</h2>
-          <p>{props.today?.todayUtc || "..."} UTC</p>
+          <h2>Today's Goal</h2>
+          <p>{props.today?.todayUtc ? formatDate(props.today.todayUtc) : "..."} UTC</p>
         </div>
       </div>
 
-      <div className="goal-input-row">
-        <input
-          value={props.goalTitle}
-          onChange={(event) => props.setGoalTitle(event.target.value)}
-          placeholder="Add a custom goal for today"
-        />
-        <button className="primary-button" onClick={props.addGoal}>
-          <Plus size={16} /> Add
-        </button>
+      <div className="goal-input-wrapper" ref={wrapperRef}>
+        <div className="goal-input-row">
+          <input
+            value={props.goalTitle}
+            onChange={(event) => props.setGoalTitle(event.target.value)}
+            onFocus={() => { if (suggestions.length) setShowSuggestions(true); }}
+            onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+            onKeyDown={handleKeyDown}
+            placeholder="Search topics or type a custom goal"
+          />
+          <button className="primary-button" onClick={() => { setShowSuggestions(false); props.addGoal(); }}>
+            <Plus size={16} /> Add
+          </button>
+        </div>
+        {showSuggestions && suggestions.length > 0 && (
+          <div className="goal-suggestions">
+            {suggestions.map((topic) => (
+              <button
+                key={topic.id}
+                className="goal-suggestion-item"
+                onMouseDown={() => handleSuggestionClick(topic)}
+              >
+                <strong>{topic.name}</strong>
+                <span className="suggestion-meta">
+                  {topic.categoryName} › {topic.subcategoryName}
+                  {topic.tier ? ` · ${tierLabel(topic.tier)}` : ""}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       <button className="secondary-button" onClick={props.addSelectedTopicGoal} disabled={!props.selectedTopic}>
         <CalendarDays size={16} />
@@ -797,7 +874,7 @@ function RevisionPreview({ revisions }: { revisions: RevisionItem[] }) {
       <div className="revision-chips">
         {revisions.map((revision) => (
           <span key={revision.id} className={revision.completedAtUtc ? "complete" : ""}>
-            R{revision.stage}: {revision.dueDateUtc}
+            R{revision.stage}: {formatDate(revision.dueDateUtc)}
           </span>
         ))}
       </div>
@@ -811,7 +888,7 @@ function StudyBundleView({ study }: { study: StudyResponse }) {
     <div className="study-grid">
       <section className="study-section wide">
         <h3>Summary</h3>
-        <p>{bundle.summary}</p>
+        <Md text={bundle.summary} />
         <div className="availability-row">
           <span className={study.resources.sources.articleAvailable ? "ok" : "missing"}>
             Notes {study.resources.sources.articleAvailable ? "available" : "missing"}
@@ -824,19 +901,19 @@ function StudyBundleView({ study }: { study: StudyResponse }) {
 
       <section className="study-section">
         <h3>Intuition</h3>
-        <p>{bundle.intuition}</p>
+        <Md text={bundle.intuition} />
       </section>
 
       <section className="study-section">
         <h3>Complexity</h3>
-        <p>{bundle.complexity}</p>
+        <Md text={bundle.complexity} />
       </section>
 
       <section className="study-section wide">
         <h3>Notes</h3>
         <ul>
           {bundle.notes.map((note, index) => (
-            <li key={index}>{note}</li>
+            <li key={index}><Md text={note} /></li>
           ))}
         </ul>
       </section>
@@ -851,14 +928,14 @@ function StudyBundleView({ study }: { study: StudyResponse }) {
 
       <section className="study-section">
         <h3>Video Summary</h3>
-        <p>{bundle.videoSummary || "No transcript summary was available."}</p>
+        <Md text={bundle.videoSummary || "No transcript summary was available."} />
       </section>
 
       <section className="study-section">
         <h3>Common Mistakes</h3>
         <ul>
           {bundle.mistakes.map((mistake, index) => (
-            <li key={index}>{mistake}</li>
+            <li key={index}><Md text={mistake} /></li>
           ))}
         </ul>
       </section>
@@ -870,7 +947,7 @@ function StudyBundleView({ study }: { study: StudyResponse }) {
         </h3>
         <ul>
           {bundle.sourceNotes.map((note, index) => (
-            <li key={index}>{note}</li>
+            <li key={index}><Md text={note} /></li>
           ))}
         </ul>
       </section>
@@ -895,6 +972,19 @@ function InlineLoading({ label }: { label: string }) {
       {label}
     </span>
   );
+}
+
+function formatDate(isoDate: string): string {
+  const [y, m, d] = isoDate.split("-");
+  return `${d}-${m}-${y}`;
+}
+
+function Md({ text }: { text: string }) {
+  const html = React.useMemo(
+    () => marked.parse(text, { async: false }) as string,
+    [text]
+  );
+  return <div className="md-content" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 function tierLabel(tier: TopicTier) {
