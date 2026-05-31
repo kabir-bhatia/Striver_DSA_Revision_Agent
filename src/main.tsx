@@ -25,7 +25,7 @@ import "./styles.css";
 
 marked.setOptions({ breaks: true, gfm: true });
 
-type TopicTier = "easy" | "medium" | "hard" | "tricky";
+type TopicTier = "very_easy" | "easy" | "medium" | "hard" | "tricky";
 type TierFilter = TopicTier | "unassigned" | "";
 type AppView = "browse" | "today";
 
@@ -121,6 +121,7 @@ interface TodaySchedule {
 }
 
 const tiers: Array<{ value: TopicTier; label: string }> = [
+  { value: "very_easy", label: "Very Easy" },
   { value: "easy", label: "Easy" },
   { value: "medium", label: "Medium" },
   { value: "hard", label: "Hard" },

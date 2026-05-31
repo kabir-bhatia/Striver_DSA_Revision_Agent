@@ -661,7 +661,8 @@ function getDueRevisions(todayUtc: string): RevisionItem[] {
 }
 
 function tierOffsets(tier?: TopicTier) {
-  if (tier === "easy") return [10, 30];
+  if (tier === "very_easy") return [];
+  if (tier === "easy") return [25];
   if (tier === "medium") return [7, 20];
   if (tier === "hard" || tier === "tricky") return [2, 10, 30];
   return [];
@@ -678,7 +679,13 @@ function addUtcDays(dateUtc: string, days: number) {
 }
 
 function normalizeTier(tier: string | null) {
-  if (tier === "easy" || tier === "medium" || tier === "hard" || tier === "tricky") {
+  if (
+    tier === "very_easy" ||
+    tier === "easy" ||
+    tier === "medium" ||
+    tier === "hard" ||
+    tier === "tricky"
+  ) {
     return tier;
   }
   return null;

@@ -1,4 +1,4 @@
-export type TopicTier = "easy" | "medium" | "hard" | "tricky";
+export type TopicTier = "very_easy" | "easy" | "medium" | "hard" | "tricky";
 export type TierFilter = TopicTier | "unassigned";
 
 export interface SheetProblem {
