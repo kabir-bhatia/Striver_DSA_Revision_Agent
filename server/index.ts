@@ -283,6 +283,7 @@ function stringQuery(value: unknown) {
 
 function tierQuery(value: unknown): TierFilter | undefined {
   if (
+    value === "very_easy" ||
     value === "easy" ||
     value === "medium" ||
     value === "hard" ||
@@ -295,5 +296,11 @@ function tierQuery(value: unknown): TierFilter | undefined {
 }
 
 function isTier(value: unknown) {
-  return value === "easy" || value === "medium" || value === "hard" || value === "tricky";
+  return (
+    value === "very_easy" ||
+    value === "easy" ||
+    value === "medium" ||
+    value === "hard" ||
+    value === "tricky"
+  );
 }
