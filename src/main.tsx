@@ -19,6 +19,8 @@ import {
   Trash2
 } from "lucide-react";
 import { marked } from "marked";
+import katex from "katex";
+import "katex/dist/katex.min.css";
 import "./styles.css";
 
 marked.setOptions({ breaks: true, gfm: true });
@@ -979,11 +981,44 @@ function formatDate(isoDate: string): string {
   return `${d}-${m}-${y}`;
 }
 
+function renderLatex(text: string): string {
+  const placeholders: string[] = [];
+
+  // Replace $$...$$ display math with placeholders
+  let processed = text.replace(/\$\$([\s\S]+?)\$\$/g, (_match, tex: string) => {
+    try {
+      const html = katex.renderToString(tex.trim(), { displayMode: true, throwOnError: false });
+      const idx = placeholders.push(html) - 1;
+      return `%%KATEX_${idx}%%`;
+    } catch {
+      return _match;
+    }
+  });
+
+  // Replace $...$ inline math with placeholders (avoid matching $$)
+  processed = processed.replace(/(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)/g, (_match, tex: string) => {
+    try {
+      const html = katex.renderToString(tex.trim(), { displayMode: false, throwOnError: false });
+      const idx = placeholders.push(html) - 1;
+      return `%%KATEX_${idx}%%`;
+    } catch {
+      return _match;
+    }
+  });
+
+  // Run marked on the placeholder-safe text
+  let html = marked.parse(processed, { async: false }) as string;
+
+  // Restore KaTeX rendered HTML from placeholders
+  placeholders.forEach((rendered, idx) => {
+    html = html.replace(`%%KATEX_${idx}%%`, rendered);
+  });
+
+  return html;
+}
+
 function Md({ text }: { text: string }) {
-  const html = React.useMemo(
-    () => marked.parse(text, { async: false }) as string,
-    [text]
-  );
+  const html = React.useMemo(() => renderLatex(text), [text]);
   return <div className="md-content" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
