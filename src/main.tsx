@@ -53,11 +53,10 @@ interface Topic {
 }
 
 interface StudyBundle {
-  summary: string;
+  problem: string;
   intuition: string;
-  notes: string[];
-  videoSummary: string;
-  cppCode: string;
+  solution: string[];
+  pythonCode: string;
   complexity: string;
   mistakes: string[];
   sourceNotes: string[];
@@ -1023,8 +1022,8 @@ function StudyBundleView({ study }: { study: StudyResponse }) {
   return (
     <div className="study-grid">
       <section className="study-section wide">
-        <h3>Summary</h3>
-        <Md text={bundle.summary} />
+        <h3>Problem</h3>
+        <Md text={bundle.problem} />
         <div className="availability-row">
           <span className={study.resources.sources.articleAvailable ? "ok" : "missing"}>
             Notes {study.resources.sources.articleAvailable ? "available" : "missing"}
@@ -1035,36 +1034,31 @@ function StudyBundleView({ study }: { study: StudyResponse }) {
         </div>
       </section>
 
-      <section className="study-section">
+      <section className="study-section wide">
         <h3>Intuition</h3>
         <Md text={bundle.intuition} />
       </section>
 
-      <section className="study-section">
-        <h3>Complexity</h3>
-        <Md text={bundle.complexity} />
-      </section>
-
       <section className="study-section wide">
-        <h3>Notes</h3>
-        <ul>
-          {bundle.notes.map((note, index) => (
-            <li key={index}><Md text={note} /></li>
+        <h3>Solution</h3>
+        <ol>
+          {bundle.solution.map((step, index) => (
+            <li key={index}><Md text={step} /></li>
           ))}
-        </ul>
+        </ol>
       </section>
 
       <section className="study-section wide">
         <h3>
           <Code2 size={18} />
-          C++ Solution
+          Python Solution
         </h3>
-        <pre>{bundle.cppCode}</pre>
+        <pre>{bundle.pythonCode}</pre>
       </section>
 
       <section className="study-section">
-        <h3>Video Summary</h3>
-        <Md text={bundle.videoSummary || "No transcript summary was available."} />
+        <h3>Complexity</h3>
+        <Md text={bundle.complexity} />
       </section>
 
       <section className="study-section">

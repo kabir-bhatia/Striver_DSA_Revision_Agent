@@ -40,7 +40,8 @@ export async function answerTopicQuestion(
 
   const response = await getClient().models.generateContent({
     model: config.geminiModel,
-    contents: `You are a DSA placement revision tutor. Answer in concise, practical terms and prefer C++ examples.
+    contents: `You are a DSA placement revision tutor. Answer in concise, practical terms and prefer Python examples.
+When generating Python code, use clean, readable Python 3 with type hints where helpful.
 
 Topic:
 ${topic.name}
@@ -64,15 +65,14 @@ Answer the latest user question. If the resources are insufficient, say what is 
 }
 
 function buildStudyPrompt(topic: SheetProblem, resources: TopicResources) {
-  return `Create a C++-first DSA revision bundle for placement preparation.
+  return `Create a Python-first DSA revision bundle for placement preparation.
 
 Return ONLY valid JSON with this exact shape:
 {
-  "summary": "string",
+  "problem": "string",
   "intuition": "string",
-  "notes": ["string"],
-  "videoSummary": "string",
-  "cppCode": "string",
+  "solution": ["string"],
+  "pythonCode": "string",
   "complexity": "string",
   "mistakes": ["string"],
   "sourceNotes": ["string"]
@@ -99,12 +99,44 @@ ${resources.codeBlocks.length ? resources.codeBlocks.join("\n\n---\n\n") : "None
 Video transcript:
 ${resources.transcript || "Not available"}
 
-Instructions:
-- Use both article notes and video transcript if available.
-- If only one resource is available, base the bundle on that resource and mention the missing source in sourceNotes.
-- Prefer a clean, interview-ready C++ solution.
-- Include time and space complexity.
-- Keep notes sharp for someone revising after forgetting concepts.`;
+Field-by-field instructions:
+
+"problem":
+  - Write a clear, self-contained problem statement in the style of LeetCode.
+  - Include: what the input is, what the output should be, any constraints that matter.
+  - Include 1-2 concrete examples with Input/Output/Explanation, extracted from the article if available, otherwise generate realistic ones.
+  - The reader should fully understand the problem from this section alone, without needing to visit any link.
+  - Format: plain text with newlines. Example blocks like: "Example 1:\nInput: nums = [1,0,1], goal = 2\nOutput: 4\nExplanation: ..."
+
+"intuition":
+  - Explain the WHY behind the optimal approach, not just the what.
+  - Start by describing what a naive/brute force approach looks like and why it is slow.
+  - Then explain the key observation or insight that leads to the better approach.
+  - Explain why this specific data structure or algorithm (e.g. sliding window, binary search, DP) is a natural fit for this problem.
+  - Use analogies or concrete reasoning. Be thorough — this should read like a senior engineer explaining to a junior.
+  - Do NOT just list steps. Focus on building the mental model.
+
+"solution":
+  - This is an array of strings, each string is one step in the solution.
+  - Provide a detailed, step-by-step walkthrough of the algorithm.
+  - Each step should be a complete thought that explains: what we are doing AND why.
+  - Cover: initialisation, the main loop logic, edge cases, how each variable is used.
+  - Aim for 6-10 steps. Each step should be 1-3 sentences, not just a one-liner.
+  - Example of good quality: "Maintain a max_freq variable tracking the highest character frequency seen in the window. Crucially, we never decrease max_freq even when shrinking — because we only care about the largest valid window seen so far, not the current window's exact max."
+
+"pythonCode":
+  - Clean, interview-ready Python 3 solution.
+  - Add inline comments on non-obvious lines.
+  - Use type hints.
+
+"complexity":
+  - Time and space complexity with a brief justification for each.
+
+"mistakes":
+  - Common mistakes or gotchas specific to this problem that trip people up in interviews.
+
+"sourceNotes":
+  - Note which resources were used. Mention if article or transcript was missing.`;
 }
 
 function parseJsonResponse(text: string) {
@@ -129,11 +161,10 @@ function parseJsonResponse(text: string) {
 
 function normalizeStudyBundle(value: Partial<StudyBundle>): StudyBundle {
   return {
-    summary: value.summary || "",
+    problem: value.problem || "",
     intuition: value.intuition || "",
-    notes: arrayOfStrings(value.notes),
-    videoSummary: value.videoSummary || "",
-    cppCode: value.cppCode || "",
+    solution: arrayOfStrings(value.solution),
+    pythonCode: value.pythonCode || "",
     complexity: value.complexity || "",
     mistakes: arrayOfStrings(value.mistakes),
     sourceNotes: arrayOfStrings(value.sourceNotes)
