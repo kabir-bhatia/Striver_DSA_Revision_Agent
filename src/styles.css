@@ -467,8 +467,48 @@ button:disabled {
   line-height: 1.5;
 }
 
+/* ── Mistake Note Panel ─────────────────────────────── */
+
 .note-panel {
   margin-bottom: 12px;
+}
+
+.note-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.note-panel-header h3 {
+  margin: 0;
+}
+
+.note-tab-row {
+  display: flex;
+  gap: 4px;
+}
+
+.note-tab {
+  border: 1px solid #cbd6df;
+  border-radius: 6px;
+  background: #fff;
+  color: #52606d;
+  padding: 4px 12px;
+  font-size: 0.84rem;
+  font-weight: 600;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.note-tab.active {
+  background: #1f6f5d;
+  border-color: #1f6f5d;
+  color: #fff;
+}
+
+.note-tab:disabled {
+  opacity: 0.45;
 }
 
 .note-panel textarea {
@@ -480,6 +520,22 @@ button:disabled {
   padding: 10px 12px;
   margin-bottom: 10px;
 }
+
+.note-preview {
+  min-height: 60px;
+  border: 1px solid #e2eaef;
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: #f8faf9;
+}
+
+.note-saved-hint {
+  margin: 8px 0 0;
+  font-size: 0.8rem;
+  color: #9c5419;
+}
+
+/* ── Revision Timeline ──────────────────────────────── */
 
 .revision-preview {
   margin-bottom: 12px;
@@ -610,6 +666,20 @@ button:disabled {
   grid-template-columns: 1fr auto;
   align-items: center;
   gap: 12px;
+}
+
+.today-card.clickable,
+.goal-row.clickable {
+  cursor: pointer;
+}
+
+.today-card.clickable:hover,
+.today-card.clickable:focus,
+.goal-row.clickable:hover,
+.goal-row.clickable:focus {
+  border-color: #2c7564;
+  background: #eef8f5;
+  outline: none;
 }
 
 .today-card strong,

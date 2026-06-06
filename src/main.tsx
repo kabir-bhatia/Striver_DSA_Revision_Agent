@@ -41,6 +41,7 @@ interface Topic {
   name: string;
   article?: string;
   youtube?: string;
+  leetcode?: string;
   difficulty?: string;
   categoryId: string;
   categoryName: string;
@@ -245,6 +246,22 @@ function App() {
   async function loadRevisions(topicId: string) {
     const data = await api<RevisionItem[]>(`/api/topics/${topicId}/revisions`);
     setRevisions(data);
+  }
+
+  async function openTopic(topicId: string) {
+    setError("");
+    try {
+      const topic = await api<Topic>(`/api/topics/${topicId}`);
+      setView("browse");
+      setQuery("");
+      setTierFilter("");
+      setSelectedSection(topic.categoryId);
+      setSelectedSubcategory(topic.subcategoryId);
+      setSelectedTopic(topic);
+      setStudy(undefined);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
   }
 
   async function loadStudy(topic = selectedTopic, force = false) {
@@ -472,7 +489,11 @@ function App() {
             loadingTopics={loadingTopics}
           />
         ) : (
-          <TodayRevisions today={today} onComplete={completeRevision} />
+          <TodayRevisions
+            today={today}
+            onComplete={completeRevision}
+            onOpenTopic={openTopic}
+          />
         )}
       </section>
 
@@ -490,6 +511,7 @@ function App() {
             addSelectedTopicGoal={addSelectedTopicGoal}
             toggleGoal={toggleGoal}
             deleteGoal={deleteGoal}
+            openTopic={openTopic}
           />
         ) : selectedTopic ? (
           <>
@@ -508,6 +530,11 @@ function App() {
                 {selectedTopic.youtube && (
                   <a href={selectedTopic.youtube} target="_blank" rel="noreferrer">
                     <PlayCircle size={16} /> Video <ExternalLink size={14} />
+                  </a>
+                )}
+                {selectedTopic.leetcode && (
+                  <a href={selectedTopic.leetcode} target="_blank" rel="noreferrer">
+                    <Code2 size={16} /> LeetCode <ExternalLink size={14} />
                   </a>
                 )}
               </div>
@@ -542,17 +569,12 @@ function App() {
               </button>
             </div>
 
-            <section className="study-section wide note-panel">
-              <h3>Mistake Note</h3>
-              <textarea
-                value={noteDraft}
-                onChange={(event) => setNoteDraft(event.target.value)}
-                placeholder="Optional: what did you specifically do wrong in this question?"
-              />
-              <button className="secondary-button" onClick={() => saveNote()}>
-                <Save size={16} /> Save note
-              </button>
-            </section>
+            <MistakeNotePanel
+              noteDraft={noteDraft}
+              setNoteDraft={setNoteDraft}
+              savedNote={selectedTopic.mistakeNote}
+              onSave={() => saveNote()}
+            />
 
             <RevisionPreview revisions={revisions} />
 
@@ -689,10 +711,12 @@ function BrowseTopics(props: {
 
 function TodayRevisions({
   today,
-  onComplete
+  onComplete,
+  onOpenTopic
 }: {
   today?: TodaySchedule;
   onComplete: (id: number) => void;
+  onOpenTopic: (topicId: string) => void;
 }) {
   return (
     <>
@@ -710,7 +734,19 @@ function TodayRevisions({
           <p className="empty-state">No due or overdue revisions for UTC today.</p>
         )}
         {today?.revisions.map((revision) => (
-          <article className="today-card" key={revision.id}>
+          <article
+            className="today-card clickable"
+            key={revision.id}
+            role="button"
+            tabIndex={0}
+            onClick={() => onOpenTopic(revision.topicId)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onOpenTopic(revision.topicId);
+              }
+            }}
+          >
             <div>
               <strong>{revision.topicName}</strong>
               <p>
@@ -718,7 +754,13 @@ function TodayRevisions({
               </p>
               {revision.mistakeNote && <small>{revision.mistakeNote}</small>}
             </div>
-            <button className="secondary-button" onClick={() => onComplete(revision.id)}>
+            <button
+              className="secondary-button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onComplete(revision.id);
+              }}
+            >
               <Check size={16} /> Done
             </button>
           </article>
@@ -738,6 +780,7 @@ function TodayGoals(props: {
   addSelectedTopicGoal: () => void;
   toggleGoal: (goal: DailyGoal) => void;
   deleteGoal: (goal: DailyGoal) => void;
+  openTopic: (topicId: string) => void;
 }) {
   const [suggestions, setSuggestions] = React.useState<Topic[]>([]);
   const [showSuggestions, setShowSuggestions] = React.useState(false);
@@ -830,15 +873,43 @@ function TodayGoals(props: {
           <p className="empty-state">No goals added for UTC today.</p>
         )}
         {props.today?.goals.map((goal) => (
-          <article className={`goal-row ${goal.completedAtUtc ? "done" : ""}`} key={goal.id}>
-            <button className="mini-check" onClick={() => props.toggleGoal(goal)}>
+          <article
+            className={`goal-row ${goal.completedAtUtc ? "done" : ""} ${goal.topicId ? "clickable" : ""}`}
+            key={goal.id}
+            role={goal.topicId ? "button" : undefined}
+            tabIndex={goal.topicId ? 0 : undefined}
+            onClick={() => {
+              if (goal.topicId) props.openTopic(goal.topicId);
+            }}
+            onKeyDown={(event) => {
+              if (!goal.topicId) return;
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                props.openTopic(goal.topicId);
+              }
+            }}
+          >
+            <button
+              className="mini-check"
+              onClick={(event) => {
+                event.stopPropagation();
+                props.toggleGoal(goal);
+              }}
+            >
               {goal.completedAtUtc ? <Check size={14} /> : null}
             </button>
             <div>
               <strong>{goal.title}</strong>
               {goal.topicName && <small>Linked topic: {goal.topicName}</small>}
             </div>
-            <button className="icon-button subtle" onClick={() => props.deleteGoal(goal)} title="Delete goal">
+            <button
+              className="icon-button subtle"
+              onClick={(event) => {
+                event.stopPropagation();
+                props.deleteGoal(goal);
+              }}
+              title="Delete goal"
+            >
               <Trash2 size={16} />
             </button>
           </article>
@@ -865,6 +936,68 @@ function ProgressCard({ progress }: { progress: ProgressSummary }) {
         {progress.done} / {progress.total} done
       </p>
       <small>{progress.remaining} remaining</small>
+    </section>
+  );
+}
+
+function MistakeNotePanel({
+  noteDraft,
+  setNoteDraft,
+  savedNote,
+  onSave
+}: {
+  noteDraft: string;
+  setNoteDraft: (value: string) => void;
+  savedNote: string;
+  onSave: () => void;
+}) {
+  const [mode, setMode] = React.useState<"edit" | "preview">("edit");
+
+  return (
+    <section className="study-section wide note-panel">
+      <div className="note-panel-header">
+        <h3>Mistake Note</h3>
+        <div className="note-tab-row">
+          <button
+            className={mode === "edit" ? "note-tab active" : "note-tab"}
+            onClick={() => setMode("edit")}
+          >
+            Edit
+          </button>
+          <button
+            className={mode === "preview" ? "note-tab active" : "note-tab"}
+            onClick={() => setMode("preview")}
+            disabled={!noteDraft.trim()}
+          >
+            Preview
+          </button>
+        </div>
+      </div>
+
+      {mode === "edit" ? (
+        <>
+          <textarea
+            value={noteDraft}
+            onChange={(event) => setNoteDraft(event.target.value)}
+            placeholder="Optional: what did you specifically do wrong? Supports markdown and LaTeX (e.g. $O(n \log n)$)."
+          />
+          <button className="secondary-button" onClick={onSave}>
+            <Save size={16} /> Save note
+          </button>
+        </>
+      ) : (
+        <div className="note-preview">
+          {noteDraft.trim() ? (
+            <Md text={noteDraft} />
+          ) : (
+            <p className="empty-state">Nothing to preview yet.</p>
+          )}
+        </div>
+      )}
+
+      {mode === "edit" && savedNote && savedNote !== noteDraft && (
+        <p className="note-saved-hint">Unsaved changes — click Save note to persist.</p>
+      )}
     </section>
   );
 }
