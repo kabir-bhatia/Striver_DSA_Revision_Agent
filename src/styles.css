@@ -467,6 +467,86 @@ button:disabled {
   line-height: 1.5;
 }
 
+.code-editor {
+  overflow: hidden;
+  border: 1px solid #27352f;
+  border-radius: 8px;
+  background: #1d2228;
+  box-shadow: 0 8px 22px rgba(12, 23, 20, 0.12);
+}
+
+.code-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 38px;
+  padding: 0 14px;
+  border-bottom: 1px solid #343b44;
+  background: #252b32;
+  color: #aeb8c4;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.code-language {
+  color: #61afef;
+}
+
+.code-editor pre {
+  max-height: 620px;
+  border-radius: 0;
+  background: #1d2228;
+  padding: 0;
+  tab-size: 4;
+}
+
+.code-editor code.hljs {
+  display: block;
+  overflow-x: auto;
+  padding: 16px 18px;
+  background: #1d2228;
+  color: #abb2bf;
+  font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  font-size: 0.9rem;
+  line-height: 1.65;
+  white-space: pre;
+}
+
+.code-editor .hljs-comment,
+.code-editor .hljs-quote {
+  color: #7f8c77;
+  font-style: italic;
+}
+
+.code-editor .hljs-keyword,
+.code-editor .hljs-selector-tag,
+.code-editor .hljs-literal {
+  color: #c678dd;
+}
+
+.code-editor .hljs-type,
+.code-editor .hljs-built_in {
+  color: #e5c07b;
+}
+
+.code-editor .hljs-string,
+.code-editor .hljs-meta .hljs-string {
+  color: #98c379;
+}
+
+.code-editor .hljs-number {
+  color: #d19a66;
+}
+
+.code-editor .hljs-title.function_,
+.code-editor .hljs-function .hljs-title {
+  color: #61afef;
+}
+
+.code-editor .hljs-meta {
+  color: #56b6c2;
+}
+
 /* ── Mistake Note Panel ─────────────────────────────── */
 
 .note-panel {

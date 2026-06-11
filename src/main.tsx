@@ -1,5 +1,8 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
+import hljs from "highlight.js/lib/core";
+import cpp from "highlight.js/lib/languages/cpp";
+import "highlight.js/styles/atom-one-dark.css";
 import {
   BookOpen,
   CalendarDays,
@@ -24,6 +27,30 @@ import "katex/dist/katex.min.css";
 import "./styles.css";
 
 marked.setOptions({ breaks: true, gfm: true });
+hljs.registerLanguage("cpp", cpp);
+
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: string | null }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { error: error.message };
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="error-banner" style={{ whiteSpace: "pre-wrap", padding: "1rem" }}>
+          <strong>Render error:</strong> {this.state.error}
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 type TopicTier = "very_easy" | "easy" | "medium" | "hard" | "tricky";
 type TierFilter = TopicTier | "unassigned" | "";
@@ -53,10 +80,9 @@ interface Topic {
 }
 
 interface StudyBundle {
-  summary: string;
+  problem: string;
   intuition: string;
-  notes: string[];
-  videoSummary: string;
+  solution: string[];
   cppCode: string;
   complexity: string;
   mistakes: string[];
@@ -1023,8 +1049,8 @@ function StudyBundleView({ study }: { study: StudyResponse }) {
   return (
     <div className="study-grid">
       <section className="study-section wide">
-        <h3>Summary</h3>
-        <Md text={bundle.summary} />
+        <h3>Problem</h3>
+        <Md text={bundle.problem} />
         <div className="availability-row">
           <span className={study.resources.sources.articleAvailable ? "ok" : "missing"}>
             Notes {study.resources.sources.articleAvailable ? "available" : "missing"}
@@ -1035,23 +1061,18 @@ function StudyBundleView({ study }: { study: StudyResponse }) {
         </div>
       </section>
 
-      <section className="study-section">
+      <section className="study-section wide">
         <h3>Intuition</h3>
         <Md text={bundle.intuition} />
       </section>
 
-      <section className="study-section">
-        <h3>Complexity</h3>
-        <Md text={bundle.complexity} />
-      </section>
-
       <section className="study-section wide">
-        <h3>Notes</h3>
-        <ul>
-          {bundle.notes.map((note, index) => (
-            <li key={index}><Md text={note} /></li>
+        <h3>Solution</h3>
+        <ol>
+          {(bundle.solution || []).map((step, index) => (
+            <li key={index}><Md text={step} /></li>
           ))}
-        </ul>
+        </ol>
       </section>
 
       <section className="study-section wide">
@@ -1059,18 +1080,18 @@ function StudyBundleView({ study }: { study: StudyResponse }) {
           <Code2 size={18} />
           C++ Solution
         </h3>
-        <pre>{bundle.cppCode}</pre>
+        <CodeBlock code={bundle.cppCode} />
       </section>
 
       <section className="study-section">
-        <h3>Video Summary</h3>
-        <Md text={bundle.videoSummary || "No transcript summary was available."} />
+        <h3>Complexity</h3>
+        <Md text={bundle.complexity} />
       </section>
 
       <section className="study-section">
         <h3>Common Mistakes</h3>
         <ul>
-          {bundle.mistakes.map((mistake, index) => (
+          {(bundle.mistakes || []).map((mistake, index) => (
             <li key={index}><Md text={mistake} /></li>
           ))}
         </ul>
@@ -1082,11 +1103,33 @@ function StudyBundleView({ study }: { study: StudyResponse }) {
           Source Notes
         </h3>
         <ul>
-          {bundle.sourceNotes.map((note, index) => (
+          {(bundle.sourceNotes || []).map((note, index) => (
             <li key={index}><Md text={note} /></li>
           ))}
         </ul>
       </section>
+    </div>
+  );
+}
+
+function CodeBlock({ code }: { code: string }) {
+  const highlighted = React.useMemo(
+    () => hljs.highlight(code, { language: "cpp" }).value,
+    [code]
+  );
+
+  return (
+    <div className="code-editor">
+      <div className="code-editor-header">
+        <span className="code-language">C++</span>
+        <span className="code-editor-label">Solution</span>
+      </div>
+      <pre>
+        <code
+          className="hljs language-cpp"
+          dangerouslySetInnerHTML={{ __html: highlighted }}
+        />
+      </pre>
     </div>
   );
 }
@@ -1116,6 +1159,7 @@ function formatDate(isoDate: string): string {
 }
 
 function renderLatex(text: string): string {
+  if (!text) return "";
   const placeholders: string[] = [];
 
   // Replace $$...$$ display math with placeholders
@@ -1176,6 +1220,8 @@ function errorMessage(error: unknown) {
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </React.StrictMode>
 );

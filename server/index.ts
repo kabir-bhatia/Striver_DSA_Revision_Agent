@@ -132,6 +132,10 @@ app.post("/api/topics/:id/study", async (req, res, next) => {
     }
 
     let bundle = force ? undefined : getCachedStudyBundle(topic.id);
+    // If cached bundle has old schema (missing problem/solution fields), treat as stale
+    if (bundle && (!(bundle as any).problem || !(bundle as any).solution)) {
+      bundle = undefined;
+    }
     if (!bundle) {
       bundle = await generateStudyBundle(topic, resources);
       saveStudyBundle(topic.id, bundle, config.geminiModel);

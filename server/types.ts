@@ -48,10 +48,9 @@ export interface TopicResources {
 }
 
 export interface StudyBundle {
-  summary: string;
+  problem: string;
   intuition: string;
-  notes: string[];
-  videoSummary: string;
+  solution: string[];
   cppCode: string;
   complexity: string;
   mistakes: string[];

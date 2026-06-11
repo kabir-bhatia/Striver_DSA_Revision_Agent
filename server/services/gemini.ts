@@ -21,11 +21,45 @@ export async function generateStudyBundle(
     model: config.geminiModel,
     contents: prompt,
     config: {
-      responseMimeType: "application/json"
+      responseMimeType: "application/json",
+      responseJsonSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "problem",
+          "intuition",
+          "solution",
+          "cppCode",
+          "complexity",
+          "mistakes",
+          "sourceNotes"
+        ],
+        properties: {
+          problem: { type: "string" },
+          intuition: { type: "string" },
+          solution: {
+            type: "array",
+            items: { type: "string" }
+          },
+          cppCode: { type: "string" },
+          complexity: { type: "string" },
+          mistakes: {
+            type: "array",
+            items: { type: "string" }
+          },
+          sourceNotes: {
+            type: "array",
+            items: { type: "string" }
+          }
+        }
+      },
+      temperature: 0.2
     }
   });
 
-  return normalizeStudyBundle(parseJsonResponse(response.text || ""));
+  const text = response.text || "";
+  const parsed = parseJsonResponse(text);
+  return normalizeStudyBundle(parsed);
 }
 
 export async function answerTopicQuestion(
@@ -68,10 +102,9 @@ function buildStudyPrompt(topic: SheetProblem, resources: TopicResources) {
 
 Return ONLY valid JSON with this exact shape:
 {
-  "summary": "string",
+  "problem": "string",
   "intuition": "string",
-  "notes": ["string"],
-  "videoSummary": "string",
+  "solution": ["string"],
   "cppCode": "string",
   "complexity": "string",
   "mistakes": ["string"],
@@ -99,12 +132,44 @@ ${resources.codeBlocks.length ? resources.codeBlocks.join("\n\n---\n\n") : "None
 Video transcript:
 ${resources.transcript || "Not available"}
 
-Instructions:
-- Use both article notes and video transcript if available.
-- If only one resource is available, base the bundle on that resource and mention the missing source in sourceNotes.
-- Prefer a clean, interview-ready C++ solution.
-- Include time and space complexity.
-- Keep notes sharp for someone revising after forgetting concepts.`;
+Field-by-field instructions:
+
+"problem":
+  - Write a clear, self-contained problem statement in the style of LeetCode.
+  - Include: what the input is, what the output should be, any constraints that matter.
+  - Include 1-2 concrete examples with Input/Output/Explanation, extracted from the article if available, otherwise generate realistic ones.
+  - The reader should fully understand the problem from this section alone, without needing to visit any link.
+  - Format: plain text with newlines. Example blocks like: "Example 1:\nInput: nums = [1,0,1], goal = 2\nOutput: 4\nExplanation: ..."
+
+"intuition":
+  - Explain the WHY behind the optimal approach, not just the what.
+  - Start by describing what a naive/brute force approach looks like and why it is slow.
+  - Then explain the key observation or insight that leads to the better approach.
+  - Explain why this specific data structure or algorithm (e.g. sliding window, binary search, DP) is a natural fit for this problem.
+  - Use analogies or concrete reasoning. Be thorough — this should read like a senior engineer explaining to a junior.
+  - Do NOT just list steps. Focus on building the mental model.
+
+"solution":
+  - This is an array of strings, each string is one step in the solution.
+  - Provide a detailed, step-by-step walkthrough of the algorithm.
+  - Each step should be a complete thought that explains: what we are doing AND why.
+  - Cover: initialisation, the main loop logic, edge cases, how each variable is used.
+  - Aim for 6-10 steps. Each step should be 1-3 sentences, not just a one-liner.
+  - Example of good quality: "Maintain a max_freq variable tracking the highest character frequency seen in the window. Crucially, we never decrease max_freq even when shrinking — because we only care about the largest valid window seen so far, not the current window's exact max."
+
+"cppCode":
+  - Clean, interview-ready C++ solution.
+  - Always include \`using namespace std;\` immediately after the #include statements.
+  - Add inline comments on non-obvious lines.
+
+"complexity":
+  - Time and space complexity with a brief justification for each.
+
+"mistakes":
+  - Common mistakes or gotchas specific to this problem that trip people up in interviews.
+
+"sourceNotes":
+  - Note which resources were used. Mention if article or transcript was missing.`;
 }
 
 function parseJsonResponse(text: string) {
@@ -115,24 +180,87 @@ function parseJsonResponse(text: string) {
     .replace(/```$/i, "")
     .trim();
 
-  try {
-    return JSON.parse(cleaned) as Partial<StudyBundle>;
-  } catch {
-    const start = cleaned.indexOf("{");
-    const end = cleaned.lastIndexOf("}");
-    if (start >= 0 && end > start) {
-      return JSON.parse(cleaned.slice(start, end + 1)) as Partial<StudyBundle>;
-    }
-    throw new Error("Gemini returned a response that was not valid JSON.");
+  const candidates = [cleaned];
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    candidates.push(cleaned.slice(start, end + 1));
   }
+
+  let lastError: unknown;
+  for (const candidate of [...new Set(candidates)]) {
+    try {
+      return JSON.parse(candidate) as Partial<StudyBundle>;
+    } catch (error) {
+      lastError = error;
+    }
+
+    try {
+      return JSON.parse(escapeControlCharactersInStrings(candidate)) as Partial<StudyBundle>;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  const detail = lastError instanceof Error ? ` ${lastError.message}` : "";
+  throw new Error(`Gemini returned malformed JSON even after repair.${detail}`);
 }
 
-function normalizeStudyBundle(value: Partial<StudyBundle>): StudyBundle {
+function escapeControlCharactersInStrings(value: string) {
+  let result = "";
+  let inString = false;
+  let escaped = false;
+
+  for (const character of value) {
+    if (escaped) {
+      result += character;
+      escaped = false;
+      continue;
+    }
+
+    if (character === "\\") {
+      result += character;
+      if (inString) escaped = true;
+      continue;
+    }
+
+    if (character === '"') {
+      result += character;
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) {
+      if (character === "\n") {
+        result += "\\n";
+        continue;
+      }
+      if (character === "\r") {
+        result += "\\r";
+        continue;
+      }
+      if (character === "\t") {
+        result += "\\t";
+        continue;
+      }
+      const code = character.charCodeAt(0);
+      if (code < 0x20) {
+        result += `\\u${code.toString(16).padStart(4, "0")}`;
+        continue;
+      }
+    }
+
+    result += character;
+  }
+
+  return result;
+}
+
+function normalizeStudyBundle(value: Partial<StudyBundle> & { summary?: string; notes?: string[] }): StudyBundle {
   return {
-    summary: value.summary || "",
+    problem: value.problem || value.summary || "",
     intuition: value.intuition || "",
-    notes: arrayOfStrings(value.notes),
-    videoSummary: value.videoSummary || "",
+    solution: arrayOfStrings(value.solution && value.solution.length > 0 ? value.solution : value.notes),
     cppCode: value.cppCode || "",
     complexity: value.complexity || "",
     mistakes: arrayOfStrings(value.mistakes),
@@ -141,5 +269,12 @@ function normalizeStudyBundle(value: Partial<StudyBundle>): StudyBundle {
 }
 
 function arrayOfStrings(value: unknown) {
-  return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+  if (Array.isArray(value)) {
+    return value.filter((item) => typeof item === "string");
+  }
+  if (typeof value === "string") {
+    // If Gemini accidentally returns a single formatted string, split it by newlines
+    return value.split("\n").filter(Boolean);
+  }
+  return [];
 }
